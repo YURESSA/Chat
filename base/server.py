@@ -19,16 +19,19 @@ class ChatServer:
         return ip
 
     def update_clients_group_list(self):
-        """Отправка обновленных списков групп всем подключенным клиентам."""
-        group_names = list(self.groups.keys())
+        """Отправка обновленных списков групп только тем клиентам, кто в них состоит."""
         for nickname, (_, conn) in self.connections.items():
-            self.send_message(conn, f"update_groups {','.join(group_names)}")
+            user_groups = []
+            for group, members in self.groups.items():
+                if nickname in members['members']:
+                    user_groups.append(group)
+            self.send_message(conn, f"update_groups {','.join(user_groups)}")
 
     def update_clients_user_list(self):
-        """Отправка обновленных списков пользователей всем подключенным клиентам."""
-        user_names = list(self.connections.keys())
+        """Отправка обновленного списка пользователей, исключая самого себя."""
         for nickname, (_, conn) in self.connections.items():
-            self.send_message(conn, f"update_users {','.join(user_names)}")
+            user_list = [user for user in self.connections.keys() if user != nickname]
+            self.send_message(conn, f"update_users {','.join(user_list)}")
 
     def send_message(self, conn, message):
         """Универсальная отправка сообщения клиенту с обработкой ошибок."""
@@ -59,7 +62,12 @@ class ChatServer:
         command = parts[0]
 
         if command == "/help":
-            self.send_message(conn, "Доступные команды:\n/help - Список доступных команд.\n/create_group <group_name> - Создать новую группу.\n/invite <group_name> <user_name> - Пригласить пользователя в группу.\n/leave_group <group_name> - Покинуть группу.\n/group_msg <group_name> <message> - Отправить сообщение в группу.\n/p <user_name> <message> - Отправить личное сообщение.")
+            self.send_message(conn, "Доступные команды:\n/help - Список доступных команд."
+                                    "\n/create_group <group_name> - Создать новую группу."
+                                    "\n/invite <group_name> <user_name> - Пригласить пользователя в группу."
+                                    "\n/leave_group <group_name> - Покинуть группу."
+                                    "\n/group_msg <group_name> <message> - Отправить сообщение в группу."
+                                    "\n/p <user_name> <message> - Отправить личное сообщение.")
 
         elif command == "/create_group":
             self.create_group(parts, conn, nickname)

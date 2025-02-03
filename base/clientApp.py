@@ -10,6 +10,8 @@ class ChatClient:
         self.selected_recipient = None
         self.groups = []  # Список групп
         self.users = []  # Список пользователей
+        self.message_history = []  # Хранение истории сообщений
+        self.history_index = -1
         self.root = tk.Tk()
         self.root.title("Чат-клиент")
         self.root.geometry("330x280")
@@ -134,12 +136,31 @@ class ChatClient:
         )
         invite_button.grid(row=5, column=0, pady=5)
 
+        self.entry_msg.bind("<Up>", self.navigate_history_up)
+        self.entry_msg.bind("<Down>", self.navigate_history_down)
+
         # Настройка растяжения колонок и строк
         self.chat_window.grid_rowconfigure(0, weight=1)
         self.chat_window.grid_columnconfigure(0, weight=1)
         self.chat_window.grid_columnconfigure(1, weight=0)
         threading.Thread(target=self.listen_for_messages, daemon=True).start()
         self.chat_window.mainloop()
+
+    def navigate_history_up(self, event):
+        """Перемещение по истории сообщений вверх (стрелка вверх)."""
+        if self.message_history and self.history_index > 0:
+            self.history_index -= 1
+            self.entry_msg.delete(0, tk.END)
+            self.entry_msg.insert(0, self.message_history[self.history_index])
+
+    def navigate_history_down(self, event):
+        """Перемещение по истории сообщений вниз (стрелка вниз)."""
+        if self.message_history and self.history_index < len(self.message_history) - 1:
+            self.history_index += 1
+            self.entry_msg.delete(0, tk.END)
+            self.entry_msg.insert(0, self.message_history[self.history_index])
+        else:
+            self.entry_msg.delete(0, tk.END)
 
     def create_group(self):
         """Создаёт новую группу."""
@@ -204,6 +225,8 @@ class ChatClient:
         """Отправляет сообщение на сервер и отображает его локально."""
         msg = self.entry_msg.get().strip()
         if msg:
+            self.message_history.append(msg)
+            self.history_index = len(self.message_history)
             if self.selected_recipient:
                 if self.is_group_selected:
                     msg = f"/group_msg {self.selected_recipient} {msg}"
@@ -291,7 +314,6 @@ class ChatClient:
             else:
                 print("Вы вошли в чат.")
 
-        # Запуск потоков на отправку и получение сообщений
         receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
         receive_thread.start()
 
