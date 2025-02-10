@@ -1,4 +1,5 @@
 import socket
+import sqlite3
 import threading
 
 
@@ -9,6 +10,46 @@ class ChatServer:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connections = {}  # {nickname: (address, socket)}
         self.groups = {}  # {group_name: {"owner": "nick", "members": [nick1, nick2, ...]}}
+        self.db_file = 'chat1.db'
+        self.init_db()
+
+    def get_connection(self):
+        """Получение нового соединения с базой данных."""
+        try:
+            conn = sqlite3.connect(self.db_file, timeout=10)
+            return conn
+        except sqlite3.OperationalError as e:
+            print(f"Ошибка при подключении к базе данных: {e}")
+            return None
+
+    def init_db(self):
+        """Создание таблицы в базе данных, если она еще не существует."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS nicknames (
+                                nickname TEXT PRIMARY KEY,
+                                ip_address TEXT)''')
+        conn.commit()
+        conn.close()
+
+    def save_nickname_to_db(self, nickname, ip_address):
+        """Сохранение никнейма и IP-адреса в базу данных."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''INSERT OR REPLACE INTO nicknames (nickname, ip_address)
+                              VALUES (?, ?)''', (nickname, ip_address))
+        conn.commit()
+        conn.close()
+
+    def get_latest_nicknames_from_db(self, user_ip):
+        """Получение всех никнеймов и IP-адресов из базы данных."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT nickname FROM nicknames WHERE ip_address = ?", (user_ip,))
+        rows = cursor.fetchall()
+        rows = ', '.join([row[0] for row in rows])
+        conn.close()
+        return rows
 
     @staticmethod
     def get_ip():
@@ -164,6 +205,12 @@ class ChatServer:
         """Обработка подключения клиента."""
         nickname = None
         try:
+            latest_nickname = self.get_latest_nicknames_from_db(addr[0])
+            if latest_nickname:
+                self.send_message(conn, f"/last_nicknames: {self.get_latest_nicknames_from_db(addr[0])}")
+            else:
+                self.send_message(conn, f"/last_nicknames: ")
+
             nickname = conn.recv(1024).decode()
 
             if not nickname or nickname in self.connections:
@@ -171,6 +218,7 @@ class ChatServer:
                 conn.close()
                 return
 
+            self.save_nickname_to_db(nickname, addr[0])
             self.connections[nickname] = (addr, conn)
             welcome_msg = f'--- {nickname} присоединился к чату! ---'
             self.update_clients_user_list()

@@ -20,6 +20,7 @@ class ChatClient:
         self.server_ip = tk.StringVar()
         self.server_port = tk.StringVar()
         self.nickname = tk.StringVar()
+        self.previous_nicknames = []
 
         self.socket = None
         self.is_connected = False
@@ -40,27 +41,75 @@ class ChatClient:
         port_entry = tk.Entry(frame, textvariable=self.server_port, font=("Arial", 12), bd=2, relief="solid")
         port_entry.grid(row=1, column=1, sticky="ew", pady=10)
 
-        tk.Label(frame, text="Ваш ник:", fg="#ecf0f1", bg="#34495e").grid(row=2, column=0, sticky="w", pady=5)
-        nick_entry = tk.Entry(frame, textvariable=self.nickname, font=("Arial", 12), bd=2, relief="solid")
-        nick_entry.grid(row=2, column=1, sticky="ew", pady=10)
-
-        connect_button = tk.Button(frame, text="Подключиться", command=self.connect_to_server, font=("Arial", 14),
+        connect_button = tk.Button(frame, text="Подключиться", command=self.request_nicknames, font=("Arial", 14),
                                    bg="#1abc9c", fg="#fff", relief="raised", bd=5)
-        connect_button.grid(row=3, column=0, columnspan=2, pady=20)
+        connect_button.grid(row=2, column=0, columnspan=2, pady=20)
 
-    def connect_to_server(self):
-        """Подключается к серверу."""
+    def request_nicknames(self):
         ip = self.server_ip.get()
         port = self.server_port.get()
-        nickname = self.nickname.get()
-
-        if not ip or not port or not nickname:
-            messagebox.showwarning("Ошибка", "Все поля должны быть заполнены!")
+        print(ip, port)
+        if not ip or not port:
+            messagebox.showwarning("Ошибка", "Введите IP и порт!")
             return
 
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((ip, int(port)))
+            response = self.socket.recv(1024).decode()
+
+            if response.startswith("/last_nicknames:"):
+                self.previous_nicknames = response.replace('/last_nicknames: ', '')
+                self.previous_nicknames = self.previous_nicknames.split(', ')
+                print(self.previous_nicknames)
+            else:
+                self.previous_nicknames = []
+
+            self.show_nickname_selection()
+        except Exception as e:
+            messagebox.showerror("Ошибка подключения", f"Не удалось подключиться к серверу: {e}")
+
+    def show_nickname_selection(self):
+        self.root.destroy()
+        self.root = tk.Tk()
+        self.root.title("Выбор ника")
+        self.root.geometry("330x280")
+        self.root.configure(bg="#2c3e50")
+
+        frame = tk.Frame(self.root, bg="#34495e", padx=20, pady=20)
+        frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        tk.Label(frame, text="Выберите ник или введите новый:", fg="#ecf0f1", bg="#34495e").grid(row=0, column=0,
+                                                                                                 columnspan=2, pady=5)
+
+        self.nick_listbox = tk.Listbox(frame, font=("Arial", 12), bd=2, relief="solid")
+        self.nick_listbox.grid(row=1, column=0, columnspan=2, pady=5, sticky="nsew")
+        for nick in self.previous_nicknames:
+            self.nick_listbox.insert(tk.END, nick)
+        self.nick_listbox.bind("<<ListboxSelect>>", self.on_nickname_selected)
+
+        self.nick_entry = tk.Entry(frame, textvariable=self.nickname, font=("Arial", 12), bd=2, relief="solid")
+        self.nick_entry.grid(row=2, column=0, sticky="ew", pady=10)
+
+        select_button = tk.Button(frame, text="Выбрать ник", command=self.select_nickname, font=("Arial", 14),
+                                  bg="#1abc9c", fg="#fff", relief="raised", bd=5)
+        select_button.grid(row=3, column=0, columnspan=2, pady=20)
+
+    def on_nickname_selected(self, event):
+        """Заполняет поле ввода при выборе ника из списка."""
+        selected_index = self.nick_listbox.curselection()
+        if selected_index:
+            self.nickname.set(self.nick_listbox.get(selected_index[0]))
+
+    def select_nickname(self):
+        """Отправляет выбранный ник серверу."""
+        nickname = self.nick_entry.get()
+        if not nickname:
+            nickname = self.nickname.get()
+        if not nickname:
+            messagebox.showwarning("Ошибка", "Введите ник!")
+            return
+        try:
             self.socket.send(nickname.encode())
             self.is_connected = True
 
@@ -68,7 +117,7 @@ class ChatClient:
             self.open_chat_window()
 
         except Exception as e:
-            messagebox.showerror("Ошибка подключения", f"Не удалось подключиться к серверу: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось отправить ник: {e}")
 
     def open_chat_window(self):
         """Создаёт окно чата после успешного подключения."""
