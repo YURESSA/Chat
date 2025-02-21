@@ -1,6 +1,9 @@
 import socket
 import sqlite3
 import threading
+import time
+
+from flask import Flask, request, jsonify
 
 
 class ChatServer:
@@ -10,8 +13,12 @@ class ChatServer:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connections = {}  # {nickname: (address, socket)}
         self.groups = {}  # {group_name: {"owner": "nick", "members": [nick1, nick2, ...]}}
-        self.db_file = 'chat1.db'
+        self.recent_messages = []
+        self.db_file = 'chat.db'
         self.init_db()
+
+        self.app = Flask(__name__)
+        self.setup_routes()
 
     def get_connection(self):
         """Получение нового соединения с базой данных."""
@@ -31,6 +38,46 @@ class ChatServer:
                                 ip_address TEXT)''')
         conn.commit()
         conn.close()
+
+    def setup_routes(self):
+        """Настройка маршрутов Flask API."""
+
+        @self.app.route('/update_groups', methods=['GET'])
+        def update_groups():
+            """Обработка запроса на получение групп пользователя."""
+            nickname = request.args.get('nickname')
+            if not nickname:
+                return jsonify({"error": "Nickname is required"}), 400
+            groups = self.get_user_groups(nickname)
+            return jsonify({"update_groups": groups})
+
+        @self.app.route('/update_users', methods=['GET'])
+        def update_users():
+            """Обработка запроса на получение списка пользователей."""
+            nickname = request.args.get('nickname')
+            users = self.get_users_list(nickname=nickname)
+            return jsonify({"update_users": users})
+
+        @self.app.route('/last_nicknames', methods=['GET'])
+        def last_nicknames():
+            """Обработка запроса на получение последних никнеймов по IP-адресу."""
+            user_ip = request.args.get('ip_address')
+            if not user_ip:
+                return jsonify({"error": "IP address is required"}), 400
+            nicknames = self.get_latest_nicknames_from_db(user_ip)
+            return jsonify({"last_nicknames": nicknames})
+
+    def get_user_groups(self, nickname):
+        """Получение списка групп пользователя."""
+        user_groups = []
+        for group, members in self.groups.items():
+            if nickname in members['members']:
+                user_groups.append(group)
+        return user_groups
+
+    def get_users_list(self, nickname):
+        """Получение списка пользователей."""
+        return list(key for key in self.connections.keys() if key != nickname)
 
     def save_nickname_to_db(self, nickname, ip_address):
         """Сохранение никнейма и IP-адреса в базу данных."""
@@ -83,6 +130,10 @@ class ChatServer:
 
     def send_message_to_all(self, message, sender_nickname=None):
         """Отправка сообщения всем пользователям, кроме отправителя."""
+        if len(self.recent_messages) >= 15:
+            self.recent_messages.pop(0)
+        self.recent_messages.append(message)
+
         for nickname, (_, conn) in self.connections.items():
             if nickname != sender_nickname:
                 self.send_message(conn, message)
@@ -221,8 +272,10 @@ class ChatServer:
             self.save_nickname_to_db(nickname, addr[0])
             self.connections[nickname] = (addr, conn)
             welcome_msg = f'--- {nickname} присоединился к чату! ---'
-            self.update_clients_user_list()
+            self.send_message(conn, "\n".join(self.recent_messages))
             self.send_message_to_all(message=welcome_msg, sender_nickname=nickname)
+            time.sleep(0.5)
+            self.update_clients_user_list()
 
             while True:
                 msg = conn.recv(1024).decode()
@@ -231,6 +284,7 @@ class ChatServer:
                     print(f'Соединение приостановлено: {conn}, {addr}')
                     if nickname in self.connections:
                         del self.connections[nickname]
+                    self.update_clients_user_list()
                     self.send_message_to_all(message=leave_msg, sender_nickname=nickname)
                     break
 
@@ -260,6 +314,10 @@ class ChatServer:
             self.socket.bind((self.host, self.port))
             self.socket.listen()
             print(f'Сервер запущен на {self.get_ip()}:{self.port}')
+            flask_thread = threading.Thread(target=self.app.run,
+                                            kwargs={'host': '0.0.0.0', 'port': 5000, 'debug': False})
+            flask_thread.daemon = True
+            flask_thread.start()
             while True:
                 conn, addr = self.socket.accept()
                 print(f'Соединение установлено: {conn}, {addr}')

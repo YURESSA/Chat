@@ -3,6 +3,10 @@ import threading
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, simpledialog
 
+import requests
+
+base_url = "http://localhost:5000"
+
 
 class ChatClient:
     def __init__(self):
@@ -14,7 +18,7 @@ class ChatClient:
         self.history_index = -1
         self.root = tk.Tk()
         self.root.title("Чат-клиент")
-        self.root.geometry("330x280")
+        self.root.geometry("330x230")
         self.root.configure(bg="#2c3e50")
 
         self.server_ip = tk.StringVar()
@@ -27,6 +31,14 @@ class ChatClient:
 
         self.create_main_menu()
         self.root.mainloop()
+
+    @staticmethod
+    def get_ip():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
 
     def create_main_menu(self):
         """Создаёт главное меню с вводом IP, порта и ника."""
@@ -48,7 +60,6 @@ class ChatClient:
     def request_nicknames(self):
         ip = self.server_ip.get()
         port = self.server_port.get()
-        print(ip, port)
         if not ip or not port:
             messagebox.showwarning("Ошибка", "Введите IP и порт!")
             return
@@ -59,9 +70,12 @@ class ChatClient:
             response = self.socket.recv(1024).decode()
 
             if response.startswith("/last_nicknames:"):
-                self.previous_nicknames = response.replace('/last_nicknames: ', '')
-                self.previous_nicknames = self.previous_nicknames.split(', ')
-                print(self.previous_nicknames)
+                # self.previous_nicknames = response.replace('/last_nicknames: ', '')
+                # self.previous_nicknames = self.previous_nicknames.split(', ')
+                response = requests.get(f"{base_url}/last_nicknames", params={'ip_address': self.get_ip()})
+                if response.status_code == 200:
+                    data = response.json()
+                    self.previous_nicknames = data.get("last_nicknames", []).split(', ')
             else:
                 self.previous_nicknames = []
 
@@ -73,39 +87,58 @@ class ChatClient:
         self.root.destroy()
         self.root = tk.Tk()
         self.root.title("Выбор ника")
-        self.root.geometry("330x280")
+        self.root.geometry("405x425")
         self.root.configure(bg="#2c3e50")
+
+        # Настройка сетки для адаптивного размещения элементов
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
         frame = tk.Frame(self.root, bg="#34495e", padx=20, pady=20)
         frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        tk.Label(frame, text="Выберите ник или введите новый:", fg="#ecf0f1", bg="#34495e").grid(row=0, column=0,
-                                                                                                 columnspan=2, pady=5)
+        # Адаптивность внутри фрейма
+        frame.grid_rowconfigure(1, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        tk.Label(frame, text="Выберите ник, который вы использовали, или введите новый:", fg="#ecf0f1",
+                 bg="#34495e", wraplength=350, justify="center").grid(row=0, column=0, columnspan=2, pady=5, sticky="n")
 
         self.nick_listbox = tk.Listbox(frame, font=("Arial", 12), bd=2, relief="solid")
         self.nick_listbox.grid(row=1, column=0, columnspan=2, pady=5, sticky="nsew")
+
         for nick in self.previous_nicknames:
             self.nick_listbox.insert(tk.END, nick)
         self.nick_listbox.bind("<<ListboxSelect>>", self.on_nickname_selected)
 
-        self.nick_entry = tk.Entry(frame, textvariable=self.nickname, font=("Arial", 12), bd=2, relief="solid")
-        self.nick_entry.grid(row=2, column=0, sticky="ew", pady=10)
+        self.nickname = tk.StringVar()  # Добавляем переменную для хранения ника
+
+        self.nick_entry = tk.Entry(frame, textvariable=self.nickname, font=("Arial", 12), bd=5, relief="solid")
+        self.nick_entry.grid(row=2, column=0, columnspan=2, pady=10, sticky="ew")
 
         select_button = tk.Button(frame, text="Выбрать ник", command=self.select_nickname, font=("Arial", 14),
                                   bg="#1abc9c", fg="#fff", relief="raised", bd=5)
-        select_button.grid(row=3, column=0, columnspan=2, pady=20)
+        select_button.grid(row=3, column=0, columnspan=2, pady=20, sticky="ew")
+
+        # Применяем адаптивность к фрейму
+        frame.grid_rowconfigure(1, weight=1)
+        frame.grid_rowconfigure(2, weight=0)
+        frame.grid_rowconfigure(3, weight=0)
+        frame.grid_columnconfigure(0, weight=1)
 
     def on_nickname_selected(self, event):
-        """Заполняет поле ввода при выборе ника из списка."""
+        """ Обработчик выбора ника из списка """
         selected_index = self.nick_listbox.curselection()
         if selected_index:
-            self.nickname.set(self.nick_listbox.get(selected_index[0]))
+            selected_nick = self.nick_listbox.get(selected_index)
+            self.nickname.set(selected_nick)
 
     def select_nickname(self):
         """Отправляет выбранный ник серверу."""
         nickname = self.nick_entry.get()
         if not nickname:
             nickname = self.nickname.get()
+        self.nickname = nickname
         if not nickname:
             messagebox.showwarning("Ошибка", "Введите ник!")
             return
@@ -187,13 +220,25 @@ class ChatClient:
 
         self.entry_msg.bind("<Up>", self.navigate_history_up)
         self.entry_msg.bind("<Down>", self.navigate_history_down)
-
+        self.chat_window.protocol("WM_DELETE_WINDOW", self.on_closing)
         # Настройка растяжения колонок и строк
         self.chat_window.grid_rowconfigure(0, weight=1)
         self.chat_window.grid_columnconfigure(0, weight=1)
         self.chat_window.grid_columnconfigure(1, weight=0)
         threading.Thread(target=self.listen_for_messages, daemon=True).start()
         self.chat_window.mainloop()
+
+    def on_closing(self):
+        """Обработчик закрытия окна."""
+        if self.is_connected:
+            try:
+                self.socket.send("CLOSE".encode())
+            except Exception as e:
+                print(f"Ошибка при отправке CLOSE: {e}")
+            finally:
+                self.socket.close()
+                self.is_connected = False
+        self.chat_window.destroy()
 
     def navigate_history_up(self, event):
         """Перемещение по истории сообщений вверх (стрелка вверх)."""
@@ -230,21 +275,42 @@ class ChatClient:
             messagebox.showwarning("Ошибка", "Список пользователей пуст.")
             return
 
-        group_name = simpledialog.askstring("Приглашение", "Введите название группы:")
-        if not group_name or group_name not in self.groups:
-            messagebox.showwarning("Ошибка", "Группа не найдена.")
-            return
+        # Создание окна для ввода группы и пользователя
+        def on_submit():
+            group_name = group_entry.get()
+            user_name = user_entry.get()
 
-        user_name = simpledialog.askstring("Приглашение", "Введите имя пользователя:")
-        if not user_name or user_name not in self.users:
-            messagebox.showwarning("Ошибка", "Пользователь не найден.")
-            return
+            if not group_name or group_name not in self.groups:
+                messagebox.showwarning("Ошибка", "Группа не найдена.")
+                return
 
-        try:
-            self.socket.send(f"/invite {group_name} {user_name}".encode())
-            messagebox.showinfo("Приглашение", f"{user_name} приглашён в {group_name}.")
-        except:
-            messagebox.showerror("Ошибка", "Не удалось отправить приглашение.")
+            if not user_name or user_name not in self.users:
+                messagebox.showwarning("Ошибка", "Пользователь не найден.")
+                return
+
+            try:
+                self.socket.send(f"/invite {group_name} {user_name}".encode())
+                messagebox.showinfo("Приглашение", f"{user_name} приглашён в {group_name}.")
+                invite_window.destroy()  # Закрываем окно после успешного приглашения
+            except:
+                messagebox.showerror("Ошибка", "Не удалось отправить приглашение.")
+                invite_window.destroy()  # Закрываем окно при ошибке
+
+        invite_window = tk.Toplevel()  # Создаем новое окно
+        invite_window.title("Приглашение в группу")
+
+        tk.Label(invite_window, text="Введите название группы:").pack(pady=5)
+        group_entry = tk.Entry(invite_window)
+        group_entry.pack(pady=5)
+
+        tk.Label(invite_window, text="Введите имя пользователя:").pack(pady=5)
+        user_entry = tk.Entry(invite_window)
+        user_entry.pack(pady=5)
+
+        submit_button = tk.Button(invite_window, text="Пригласить", command=on_submit)
+        submit_button.pack(pady=10)
+
+        invite_window.mainloop()
 
     def on_group_selected(self, event):
         """Обработчик выбора группы для отправки сообщения."""
@@ -312,12 +378,20 @@ class ChatClient:
                     break
 
                 if msg.startswith("update_groups"):
-                    groups = msg.split(" ", 1)[1].split(",")
-                    self.update_group_list(groups)
+                    # groups = msg.split(" ", 1)[1].split(",")
+                    response = requests.get(f"{base_url}/update_groups", params={'nickname': self.nickname})
+                    if response.status_code == 200:
+                        data = response.json()
+                        groups = data.get("update_groups", [])
+                        self.update_group_list(groups)
 
                 elif msg.startswith("update_users"):
-                    users = msg.split(" ", 1)[1].split(",")
-                    self.update_user_list(users)
+                    # users = msg.split(" ", 1)[1].split(",")
+                    response = requests.get(f"{base_url}/update_users", params={'nickname': self.nickname})
+                    if response.status_code == 200:
+                        data = response.json()
+                        users = data.get("update_users", [])
+                        self.update_user_list(users)
 
                 else:
                     self.display_message(msg)
